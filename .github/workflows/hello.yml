@@ -1,24 +1,13 @@
-# 0 espaços de indentação
 name: Hello Github Actions
 
-# 0 espaços
 on:
-  # 2 espaços
   push:
-    # 4 espaços
     branches:
-      # 6 espaços
       - main
 
-# 0 espaços
 jobs:
-  # 2 espaços
   say-hello:
-    # 4 espaços
     runs-on: ubuntu-latest
-    # 4 espaços
     steps:
-      # 6 espaços
       - name: Exibir mensagem no log
-        # 8 espaços
         run: echo "Github Actions está funcionando!"
