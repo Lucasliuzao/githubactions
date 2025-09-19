@@ -23,7 +23,7 @@ resource "aws_route_table" "main" {
   
   route {
     cidr_block = "0.0.0.0./0"
-    gateway_id = aws_internet_gateway.gw.id 
+    gateway_id = aws_internet_gateway.main.id 
     }
     tags = {
       Name = "main_route_table"
@@ -43,7 +43,7 @@ resource "aws_security_group" "web-sg" {
         from_port   = 22
         to_port     = 22
         protocol    = "tcp"
-        cidr_blocks = ["0.0.0.0/0'"]
+        cidr_blocks = ["0.0.0.0/0"]
         }
 
     ingress {
