@@ -64,7 +64,8 @@ resource "aws_instance" "web_server" {
   subnet_id     = aws_subnet.main.id
   security_groups = [aws_security_group.web-sg.id]
 
-  password_data = var.admin_password
+    # Associa o par de chaves SSH à instância
+  key_name = "devops-key" # Use o nome exato do Key Pair que você criou na AWS
 
   tags = {
     Name = "VM-GithubActions-AWS"

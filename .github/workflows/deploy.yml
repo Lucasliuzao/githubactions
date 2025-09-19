@@ -102,17 +102,22 @@ jobs:
 
       - name: "Cria Inventário Ansible dinamicamente"
         run: |
+          # Cria um arquivo temporário para a chave SSH
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > key.pem
+          chmod 600 key.pem
+
           echo "[ec2_instances]" > inventory
-          echo "${{ steps.get_outputs.outputs.public_ip }} ansible_user=ubuntu ansible_password=${{ secrets.TF_VAR_admin_password }} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" >> inventory
+          echo "${{ steps.get_outputs.outputs.public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" >> inventory
 
       - name: "Executa Playbook Ansible"
         run: |
-          # Aguarda a porta SSH estar disponível antes de tentar conectar
+          # Aguarda a porta SSH estar disponível
           echo "Aguardando a porta SSH ficar disponível..."
-          sshpass -p "${{ secrets.TF_VAR_admin_password }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ steps.get_outputs.outputs.public_ip }} "while ! sudo lsof -i:22; do sleep 5; done"
+          sleep 15 # Um tempo inicial para a VM iniciar
+          ssh -i key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ steps.get_outputs.outputs.public_ip }} "while ! sudo lsof -i:22; do sleep 5; done"
           
           echo "Executando o playbook..."
-          ansible-playbook -i inventory ansible/playbook.yml --extra-vars "ansible_sudo_pass=${{ secrets.TF_VAR_admin_password }}"
+          ansible-playbook -i inventory ansible/playbook.yml
 
   # =================================================================
   # JOB 3: POST-TESTS - Verifica se a infra está funcionando
