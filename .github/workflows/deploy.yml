@@ -158,7 +158,7 @@ jobs:
               echo "✅ Instância EC2 está rodando com sucesso!"
           fi
 
-  # =================================================================
+    # =================================================================
   # JOB 4: DESTROY - Destrói a infraestrutura criada
   # =================================================================
   destroy:
@@ -180,10 +180,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: "us-east-1"
 
-      - name: "Terraform Destroy"
+      - name: "Terraform Init & Destroy" # <-- PASSO A SER VERIFICADO
         working-directory: ./infra
-        run: 
-            terraform init
-            terraform destroy -auto-approve -input=false
+        run: |
+          terraform init
+          terraform destroy -auto-approve -input=false
         env:
           TF_VAR_admin_password: ${{ secrets.TF_VAR_admin_password }}
