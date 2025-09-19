@@ -182,6 +182,8 @@ jobs:
 
       - name: "Terraform Destroy"
         working-directory: ./infra
-        run: terraform destroy -auto-approve -input=false
+        run: 
+            terraform init
+            terraform destroy -auto-approve -input=false
         env:
           TF_VAR_admin_password: ${{ secrets.TF_VAR_admin_password }}
