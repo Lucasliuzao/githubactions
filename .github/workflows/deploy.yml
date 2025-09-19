@@ -1,0 +1,187 @@
+name: "🚀 Deploy Infra AWS com Terraform e Ansible"
+
+on:
+  workflow_dispatch:
+    inputs:
+      destroy:
+        description: 'Marque para DESTRUIR a infraestrutura.'
+        required: true
+        type: boolean
+        default: false
+
+# Permissões para autenticação segura na AWS (OIDC) e para ler o código
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # =================================================================
+  # JOB 1: VALIDATE - Verifica a qualidade do código Terraform
+  # =================================================================
+  validate:
+    if: ${{ !github.event.inputs.destroy }} # Roda apenas se 'destroy' for falso
+    name: "1. ✅ Validar Código Terraform"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./infra
+
+    steps:
+      - name: "Faz o checkout do código"
+        uses: actions/checkout@v4
+
+      - name: "Configura o Terraform"
+        uses: hashicorp/setup-terraform@v3
+
+      - name: "Configura Credenciais da AWS"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: "us-east-1" # Ou sua região
+
+      - name: "Terraform Init"
+        id: init
+        run: terraform init
+
+      - name: "Terraform Validate"
+        id: validate
+        run: terraform validate
+
+      - name: "Terraform Plan"
+        id: plan
+        run: terraform plan -no-color -input=false
+        env:
+          TF_VAR_admin_password: ${{ secrets.TF_VAR_admin_password }}
+
+  # =================================================================
+  # JOB 2: DEPLOY - Cria a infra com Terraform e configura com Ansible
+  # =================================================================
+  deploy:
+    if: ${{ !github.event.inputs.destroy }}
+    name: "2. 🚀 Deploy e Configuração"
+    needs: validate # Depende do sucesso do job 'validate'
+    runs-on: ubuntu-latest
+    
+    # Define as saídas deste job para serem usadas pelo próximo
+    outputs:
+      public_ip: ${{ steps.get_outputs.outputs.public_ip }}
+      instance_id: ${{ steps.get_outputs.outputs.instance_id }}
+
+    steps:
+      - name: "Faz o checkout do código"
+        uses: actions/checkout@v4
+
+      - name: "Configura o Terraform"
+        uses: hashicorp/setup-terraform@v3
+
+      - name: "Configura Credenciais da AWS"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: "us-east-1"
+
+      - name: "Terraform Apply"
+        working-directory: ./infra
+        run: terraform apply -auto-approve -input=false
+        env:
+          TF_VAR_admin_password: ${{ secrets.TF_VAR_admin_password }}
+
+      - name: "Captura Outputs do Terraform"
+        id: get_outputs
+        working-directory: ./infra
+        run: |
+          echo "public_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
+          echo "instance_id=$(terraform output -raw instance_id)" >> $GITHUB_OUTPUT
+
+      - name: "Instala Ansible e sshpass"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible sshpass
+
+      - name: "Cria Inventário Ansible dinamicamente"
+        run: |
+          echo "[ec2_instances]" > inventory
+          echo "${{ steps.get_outputs.outputs.public_ip }} ansible_user=ubuntu ansible_password=${{ secrets.TF_VAR_admin_password }} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" >> inventory
+
+      - name: "Executa Playbook Ansible"
+        run: |
+          # Aguarda a porta SSH estar disponível antes de tentar conectar
+          echo "Aguardando a porta SSH ficar disponível..."
+          sshpass -p "${{ secrets.TF_VAR_admin_password }}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@${{ steps.get_outputs.outputs.public_ip }} "while ! sudo lsof -i:22; do sleep 5; done"
+          
+          echo "Executando o playbook..."
+          ansible-playbook -i inventory ansible/playbook.yml --extra-vars "ansible_sudo_pass=${{ secrets.TF_VAR_admin_password }}"
+
+  # =================================================================
+  # JOB 3: POST-TESTS - Verifica se a infra está funcionando
+  # =================================================================
+  post-tests:
+    if: ${{ !github.event.inputs.destroy }}
+    name: "3. ✅ Pós-Testes de Infra"
+    needs: deploy # Depende do sucesso do job 'deploy'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "Configura Credenciais da AWS"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: "us-east-1"
+
+      - name: "Testar aplicação na Porta 8081"
+        run: |
+          echo "Aguardando aplicação subir..."
+          sleep 45 # Dá um tempo para o container Docker iniciar
+          
+          response=$(curl -s -o /dev/null -w "%{http_code}" http://${{ needs.deploy.outputs.public_ip }}:8081/api/hello )
+          
+          if [ "$response" != "200" ]; then
+            echo "❌ Aplicação não respondeu como esperado na porta 8081. Status HTTP: $response"
+            exit 1
+          else
+            echo "✅ Aplicação respondeu com sucesso na porta 8081!"
+          fi
+
+      - name: "Verificar status da Instância EC2"
+        run: |
+          status=$(aws ec2 describe-instance-status --instance-ids ${{ needs.deploy.outputs.instance_id }} --query "InstanceStatuses[0].InstanceState.Name" --output text)
+          
+          echo "Status da Instância EC2: $status"
+          
+          if [ "$status" != "running" ]; then
+              echo "❌ A Instância EC2 não está em execução!"
+              exit 1
+          else
+              echo "✅ Instância EC2 está rodando com sucesso!"
+          fi
+
+  # =================================================================
+  # JOB 4: DESTROY - Destrói a infraestrutura criada
+  # =================================================================
+  destroy:
+    if: ${{ github.event.inputs.destroy }}
+    name: "4. 🧨 Destruir Infraestrutura"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Faz o checkout do código"
+        uses: actions/checkout@v4
+
+      - name: "Configura o Terraform"
+        uses: hashicorp/setup-terraform@v3
+
+      - name: "Configura Credenciais da AWS"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: "us-east-1"
+
+      - name: "Terraform Destroy"
+        working-directory: ./infra
+        run: terraform destroy -auto-approve -input=false
+        env:
+          TF_VAR_admin_password: ${{ secrets.TF_VAR_admin_password }}
